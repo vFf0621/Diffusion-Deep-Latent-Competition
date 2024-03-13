@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 import math
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from diffusers import DiffusionPipeline, UNet2DModel, DDPMScheduler
+from diffusers import DDPMPipeline, UNet2DModel, DDPMScheduler
 from accelerate import notebook_launcher
 from einops.layers.torch import Rearrange
 from diffusers.optimization import get_cosine_schedule_with_warmup
