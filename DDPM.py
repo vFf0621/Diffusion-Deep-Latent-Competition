@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 import math
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from diffusers import DDPMPipeline, UNet2DModel, DDPMScheduler
+from diffusers import UNet2DModel, DDIMScheduler, DDIMPipeline
 from accelerate import notebook_launcher
 from einops.layers.torch import Rearrange
 from diffusers.optimization import get_cosine_schedule_with_warmup
@@ -12,20 +12,21 @@ from diffusers.utils import make_image_grid
 
 from dataclasses import dataclass
 from dataclasses import dataclass
+from huggingface_hub import notebook_login
 
 @dataclass
 class TrainingConfig:
     image_size = 96  # the generated image resolution
-    train_batch_size = 100
+    train_batch_size = 32
     eval_batch_size = 4  # how many images to sample during evaluation
-    num_epochs = 50
+    num_epochs = 100
     gradient_accumulation_steps = 1
-    learning_rate = 1e-4
+    learning_rate = 1e-3
     lr_warmup_steps = 200
     save_image_epochs = 1
     save_model_epochs = 1
     mixed_precision = "no"  # `no` for float32, `fp16` for automatic mixed precision
-    output_dir = "ddpm-dlc"  # the model name locally and on the HF Hub
+    output_dir = "ddim"  # the model name locally and on the HF Hub
     time_embedding_type = 'fourier'
     push_to_hub = False  # whether to upload the saved model to the HF Hub
     overwrite_output_dir = True  # overwrite the old model when re-running the notebook
@@ -37,44 +38,49 @@ model = UNet2DModel(
     in_channels=3,  # the number of input channels, 3 for RGB images
     out_channels=3,  # the number of output channels
     layers_per_block=2,  # how many ResNet layers to use per UNet block
-    block_out_channels=(32, 32, 64, 64, 128, 128),  # the number of output channels for each UNet block
+    block_out_channels=(128, 128, 256, 256, 256,512),  # the number of output channels for each UNet block
+    attention_head_dim=16,
     down_block_types=(
         "DownBlock2D",  # a regular ResNet downsampling block
         "DownBlock2D",
-        "DownBlock2D",
-        "DownBlock2D",
+        "DownBlock2D",  # a regular ResNet downsampling block
+        "DownBlock2D",  # a regular ResNet downsampling block
+
         "AttnDownBlock2D",  # a ResNet downsampling block with spatial self-attention
         "DownBlock2D",
-        
+
 
     ),
     up_block_types=(
-        "UpBlock2D",  # a regular ResNet upsampling block
+        "UpBlock2D",
         "AttnUpBlock2D",  # a ResNet upsampling block with spatial self-attention
         "UpBlock2D",
         "UpBlock2D",
         "UpBlock2D",
         "UpBlock2D",
+
     ),
 )
+gen = torch.manual_seed(config.seed)
 def evaluate(config, epoch, pipeline):
     # Sample some images from random noise (this is the backward diffusion process).
     # The default pipeline output type is `List[PIL.Image]`
     images = pipeline(
-        batch_size=config.eval_batch_size,
-        num_inference_steps=200,
-        generator=None,
+        batch_size=16,
+        generator=gen, 
+        num_inference_steps = 50,
     ).images
 
     # Make a grid out of the images
-    image_grid = make_image_grid(images, rows=2, cols=2)
+    image_grid = make_image_grid(images, rows=4, cols=4)
 
     # Save the images
     test_dir = os.path.join(config.output_dir, "samples")
     os.makedirs(test_dir, exist_ok=True)
     image_grid.save(f"{test_dir}/{epoch:04d}.png")
 
-train_dataset = torch.load("pretrained_parameters/ds_1")
+num_train_timesteps = 1000
+train_dataset = torch.load("pretrained_parameters/ds_3")
 train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True)
 
 from accelerate import Accelerator
@@ -120,7 +126,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_s
 
             # Sample a random timestep for each image
             timesteps = torch.randint(
-                0, noise_scheduler.config.num_train_timesteps, (bs,), device=clean_images.device,
+                0, num_train_timesteps, (bs,), device=clean_images.device,
                 dtype=torch.int64
             )
 
@@ -130,7 +136,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_s
 
             with accelerator.accumulate(model):
                 # Predict the noise residual
-                noise_pred = model(noisy_images, 200, return_dict=False)[0]
+                noise_pred = model(noisy_images, num_train_timesteps, return_dict=False)[0]
                 loss = F.mse_loss(noise_pred, noise)
                 accelerator.backward(loss)
 
@@ -147,7 +153,7 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_s
 
         # After each epoch you optionally sample some demo images with evaluate() and save the model
         if accelerator.is_main_process:
-            pipeline = DDPMPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)
+            pipeline = DDIMPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)
 
             if (epoch + 1) % config.save_image_epochs == 0 or epoch == config.num_epochs - 1:
                 evaluate(config, epoch, pipeline)
@@ -162,8 +168,8 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_s
                     )
                 else:
                     pipeline.save_pretrained(config.output_dir)
-noise_scheduler = DDPMScheduler(num_train_timesteps=200)
-optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+noise_scheduler = DDIMScheduler(num_train_timesteps=1000)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.0002)
 lr_scheduler = get_cosine_schedule_with_warmup(
     optimizer=optimizer,
     num_warmup_steps=config.lr_warmup_steps,
