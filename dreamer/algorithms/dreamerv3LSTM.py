@@ -86,7 +86,6 @@ class DreamerV3:
             self.critic.parameters(), lr=self.config.critic_learning_rate,
             weight_decay=0.0001
         )
-        self.continue_criterion = nn.BCELoss()
 
         self.dynamic_learning_infos = DynamicInfos(self.device)
         self.behavior_learning_infos = DynamicInfos(self.device)
@@ -103,12 +102,14 @@ class DreamerV3:
 
     def train(self, metrics, ddpm):
         for _ in range(self.config.train_iterations):
+            x = ddpm(batch_size = self.config.batch_size, output_type= "np",return_dict = False)[0]
+            x = torch.from_numpy(x).to(self.device).permute((0, 3, 1, 2))/x.max() - 0.5
             for _ in range(self.config.collect_interval):
                 data = self.buffer.sample(
                     self.config.batch_size, self.config.batch_length
                 )
                 posteriors, det = self.dynamic_learning(data, metrics)
-                self.latent_imagination(posteriors, self.encoder(ddpm[0].to(self.device)), metrics)
+                self.latent_imagination(posteriors, self.encoder(x), metrics)
     def dynamic_learning(self, data, metrics):
         prior, deterministic = self.rssm.recurrent_model_input_init(len(data.action))
 
@@ -160,16 +161,15 @@ class DreamerV3:
         reconstructed_observation_dist = self.decoder(
             posterior_info.posteriors, posterior_info.deterministics, seq=1
         ) 
-        reconstruction_observation_loss = reconstructed_observation_dist.log_prob(
-            data.observation[:, 1:]
-        )
+        reconstruction_observation_loss = nn.MSELoss(reduction="sum")(reconstructed_observation_dist.rsample(
+        ),             data.observation[:, 1:])
         if self.config.use_continue_flag:
             continue_dist = self.continue_predictor(
                 posterior_info.posteriors, posterior_info.deterministics
             )
-            continue_loss = self.continue_criterion(
-                continue_dist.probs, 1 - data.done[:, 1:]
-            )
+            continue_loss =continue_dist.log_prob(
+               1 - data.done[:, 1:].squeeze(-1)
+            ).sum()
 
         reward_dist = self.reward_predictor(
             posterior_info.posteriors, posterior_info.deterministics
@@ -201,11 +201,11 @@ class DreamerV3:
         kl_divergence_loss = torch.max(torch.ones_like(kl1, device=kl1.device), kl1).mean()+torch.max(torch.ones_like(kl2, device=kl2.device), kl2).mean()
         model_loss = (
             self.config.kl_divergence_scale * kl_divergence_loss
-            - reconstruction_observation_loss.mean()
+            + reconstruction_observation_loss
             - reward_loss.mean()
         )
         if self.config.use_continue_flag:
-            model_loss += continue_loss.mean()
+            model_loss -= continue_loss
 
         self.model_optimizer.zero_grad()
         model_loss.backward()
@@ -226,11 +226,9 @@ class DreamerV3:
         self.soft_update(self.target_encoder, self.encoder)
 
     def latent_imagination(self, states, diff_state, metrics):
-        state = diff_state.reshape(-1, self.config.stochastic_size)
-        indx = random.choices(list(range(state.shape[0])),k=100)
-        state = state[indx]
-        deterministic = self.rssm.recurrent_model.input_init(100)
 
+        state, deterministic = self.rssm.recurrent_model_input_init(50)
+        z = self.rssm.representation_model(diff_state, deterministic)
         # continue_predictor reinit
         for t in range(self.config.horizon_length):
             action, log_prob = self.actor(state, deterministic)
@@ -272,7 +270,7 @@ class DreamerV3:
         if self.config.use_continue_flag:
             continues = self.continue_predictor(
                 behavior_learning_infos.priors, behavior_learning_infos.deterministics
-            ).mean
+            ).sample().unsqueeze(-1)
         else:
             continues = self.config.discount * torch.ones_like(values)
 

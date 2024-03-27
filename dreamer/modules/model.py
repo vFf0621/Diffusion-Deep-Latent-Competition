@@ -35,6 +35,51 @@ class RSSM(nn.Module):
         return self.transition_model.input_init(
             batch_size
         ), self.recurrent_model.input_init(batch_size)
+class LayerNormGRUCell(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(LayerNormGRUCell, self).__init__()
+        self.hidden_size = hidden_size
+
+        # Gates linear transformations (input to hidden)
+        self.W_ir = nn.Linear(input_size, hidden_size)
+        self.W_iz = nn.Linear(input_size, hidden_size)
+        self.W_in = nn.Linear(input_size, hidden_size)
+
+        # Gates linear transformations (hidden to hidden)
+        self.W_hr = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.W_hz = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.W_hn = nn.Linear(hidden_size, hidden_size, bias=False)
+
+        # Layer normalization for each gate
+        self.LN_r = nn.LayerNorm(hidden_size)
+        self.LN_z = nn.LayerNorm(hidden_size)
+        self.LN_n = nn.LayerNorm(hidden_size)
+
+    def forward(self, x, h_prev):
+        """
+        Forward pass of the LayerNorm GRU cell.
+        
+        Args:
+            x: Input tensor (batch, input_size).
+            h_prev: Previous hidden state (batch, hidden_size).
+        
+        Returns:
+            h_next: Next hidden state (batch, hidden_size).
+        """
+        # Reset gate
+        r_t = torch.sigmoid(self.LN_r(self.W_ir(x) + self.W_hr(h_prev)))
+        
+        # Update gate
+        z_t = torch.sigmoid(self.LN_z(self.W_iz(x) + self.W_hz(h_prev)))
+        
+        # New gate
+        n_t = torch.tanh(self.LN_n(self.W_in(x) + r_t * self.W_hn(h_prev)))
+        
+        # Next hidden state
+        h_next = (1 - z_t) * n_t + z_t * h_prev
+        
+        return h_next
+
 
 class GRU(nn.Module):
     def __init__(self, action_size, config):
@@ -51,7 +96,7 @@ class GRU(nn.Module):
             self.stochastic_size + action_size, self.config.hidden_size
         )
         self.cur_hx = None
-        self.recurrent = nn.GRUCell(self.config.hidden_size, self.deterministic_size)
+        self.recurrent = LayerNormGRUCell(self.config.hidden_size, self.deterministic_size)
         self.hx = torch.zeros(self.deterministic_size).to(self.device)
 
     def forward(self, embedded_state, action):
@@ -183,8 +228,7 @@ class RepresentationModel(nn.Module):
     def forward(self, embedded_observation, deterministic):
         if embedded_observation is None or deterministic is None:
             return
-
-        x = self.network(torch.cat((embedded_observation, deterministic.squeeze(0)), -1))
+        x = self.network(torch.cat((embedded_observation.squeeze(0), deterministic.squeeze(0)), -1))
         posterior_dist = create_normal_dist(x, min_std=self.config.min_std)
         posterior = posterior_dist.rsample()
 
@@ -226,12 +270,12 @@ class ContinueModel(nn.Module):
             self.config.hidden_size,
             self.config.num_layers,
             self.config.activation,
-            1,
+            2,
         )
 
     def forward(self, posterior, deterministic):
         x = horizontal_forward(
-            self.network, posterior, deterministic, output_shape=(1,)
+            self.network, posterior, deterministic, output_shape=(2,)
         )
-        dist = torch.distributions.Bernoulli(logits=x)
+        dist = torch.distributions.Categorical(logits=x)
         return dist

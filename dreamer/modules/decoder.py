@@ -4,6 +4,7 @@ from dreamer.utils.utils import (
     initialize_weights,
     horizontal_forward,
     create_normal_dist,
+    ImgChLayerNorm
 )
 
 '''
@@ -36,25 +37,44 @@ class Decoder(nn.Module):
         self.observation_shape = observation_shape
 
         self.network = nn.Sequential(
-            nn.Linear(
-                self.deterministic_size + self.stochastic_size, 4096,
+            nn.Unflatten(dim = 1, unflattened_size=(-1, 1, 1)),
+            nn.ConvTranspose2d(
+                1024,
+                self.config.depth * 4,
+                self.config.kernel_size,
+                self.config.stride,
             ),
-            nn.LeakyReLU(),
-            nn.LayerNorm(4096),
-            nn.Unflatten(dim=1, unflattened_size=(-1, 8, 8)),
-            
-            nn.ConvTranspose2d(in_channels=64, out_channels=64, kernel_size=3, stride=1),
-            nn.LeakyReLU(),
-            nn.BatchNorm2d(64),
-            nn.ConvTranspose2d(in_channels=64, out_channels=32, kernel_size=4, stride=2),
-            nn.LeakyReLU(),
-            nn.BatchNorm2d(32),
+            activation,
+            ImgChLayerNorm(self.config.depth * 4),
+            nn.ConvTranspose2d(
+                self.config.depth * 4,
+                self.config.depth * 2,
+                self.config.kernel_size,
+                self.config.stride,
+            ),
+            activation,
+            ImgChLayerNorm(self.config.depth * 2),
 
-            nn.ConvTranspose2d(in_channels=32, out_channels=3, kernel_size=12, stride=4),
+            nn.ConvTranspose2d(
+                self.config.depth * 2,
+                self.config.depth * 1,
+                self.config.kernel_size+1,
+                self.config.stride,
+                output_padding=(1, 1)
+            ),
+            activation,
+            ImgChLayerNorm(self.config.depth * 1),
 
-            
+            nn.ConvTranspose2d(
+                self.config.depth * 1,
+                self.observation_shape[0],
+                self.config.kernel_size+1,
+                self.config.stride+1,
+            ),
             )
-        self.log_std = nn.Parameter(torch.zeros(1)).to(config.operation.device)
+        self.linear = nn.Sequential(nn.Linear(config.parameters.dreamer.deterministic_size + config.parameters.dreamer.stochastic_size, 1024),
+                                    activation,
+                                    nn.LayerNorm(1024))
         self.network.apply(initialize_weights)
 
     def forward(self, posterior, deterministic, seq=0):
@@ -65,8 +85,9 @@ class Decoder(nn.Module):
             deterministic = deterministic.reshape(-1, deterministic.shape[-1])
 
         x = torch.cat([posterior, deterministic], -1)
+        x = self.linear(x)
         x = self.network(x)
         if seq:
             x = x.reshape(seq_len, batch_size, *self.observation_shape)
-        dist = create_normal_dist(x, self.log_std.exp(), event_shape=len(self.observation_shape))
+        dist = create_normal_dist(x, std=0.3, event_shape=len(self.observation_shape))
         return dist

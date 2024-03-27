@@ -4,6 +4,7 @@ import torch.nn as nn
 from dreamer.utils.utils import (
     initialize_weights,
     horizontal_forward,
+    ImgChLayerNorm
 )
 
 '''
@@ -29,10 +30,10 @@ class Encoder(nn.Module):
                 self.observation_shape[0],
                 self.config.depth * 1,
                 self.config.kernel_size,
-                self.config.stride,
+                self.config.stride+1,
             ),
             activation,
-            nn.BatchNorm2d(self.config.depth * 1),
+            ImgChLayerNorm(self.config.depth * 1),
             nn.Conv2d(
                 self.config.depth * 1,
                 self.config.depth * 2,
@@ -40,7 +41,7 @@ class Encoder(nn.Module):
                 self.config.stride,
             ),
             activation,
-            nn.BatchNorm2d(self.config.depth * 2),
+            ImgChLayerNorm(self.config.depth * 2),
 
             nn.Conv2d(
                 self.config.depth * 2,
@@ -49,7 +50,7 @@ class Encoder(nn.Module):
                 self.config.stride,
             ),
             activation,
-            nn.BatchNorm2d(self.config.depth * 4),
+            ImgChLayerNorm(self.config.depth * 4),
 
             nn.Conv2d(
                 self.config.depth * 4,
@@ -58,11 +59,11 @@ class Encoder(nn.Module):
                 self.config.stride,
             ),
             activation,
-            nn.BatchNorm2d(self.config.depth * 8),
+            ImgChLayerNorm(self.config.depth * 8),
 
         )
         self.bn = nn.LayerNorm(512)
-        self.fc = nn.Linear(4096, 512)
+        self.fc = nn.Linear(1024, 512)
         self.network.apply(initialize_weights)
 
     def forward(self, x, seq=0):
@@ -70,10 +71,11 @@ class Encoder(nn.Module):
             seq_len = x.shape[0]
             batch_size = x.shape[1]
             x = x.reshape(-1, *self.observation_shape)
-        else:
+        elif len(x.shape) < 4:
             x = x.unsqueeze(0)
-        y = self.network(x).view(-1)
-        y = self.fc(y.reshape(-1, 4096)).squeeze(0)
+        y = torch.flatten(self.network(x)).view(-1)
+
+        y = self.fc(y.reshape(-1, 1024)).squeeze(0)
         y = nn.LeakyReLU()(y)
         y = self.bn(y)
         if seq:
