@@ -33,8 +33,9 @@ class Actor(nn.Module):
         dist = create_normal_dist(
                 x,
                 None,
+                init_std = 0.3,
                 min_std=self.config.min_std,
-                activation=torch.tanh,
+                activation=nn.Identity(),
         )
         action = dist.rsample()
         log_probs = dist.log_prob(action)

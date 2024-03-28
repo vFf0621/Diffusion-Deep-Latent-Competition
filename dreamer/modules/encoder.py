@@ -24,7 +24,7 @@ class Encoder(nn.Module):
 
         activation = getattr(nn, self.config.activation)()
         self.observation_shape = observation_shape
-
+        self.activation = activation
         self.network = nn.Sequential(
             nn.Conv2d(
                 self.observation_shape[0],
@@ -32,16 +32,17 @@ class Encoder(nn.Module):
                 self.config.kernel_size,
                 self.config.stride+1,
             ),
-            activation,
             ImgChLayerNorm(self.config.depth * 1),
+            activation,
+
             nn.Conv2d(
                 self.config.depth * 1,
                 self.config.depth * 2,
                 self.config.kernel_size,
                 self.config.stride,
             ),
-            activation,
             ImgChLayerNorm(self.config.depth * 2),
+            activation,
 
             nn.Conv2d(
                 self.config.depth * 2,
@@ -49,8 +50,9 @@ class Encoder(nn.Module):
                 self.config.kernel_size,
                 self.config.stride,
             ),
-            activation,
             ImgChLayerNorm(self.config.depth * 4),
+
+            activation,
 
             nn.Conv2d(
                 self.config.depth * 4,
@@ -58,8 +60,8 @@ class Encoder(nn.Module):
                 self.config.kernel_size,
                 self.config.stride,
             ),
-            activation,
             ImgChLayerNorm(self.config.depth * 8),
+            activation,
 
         )
         self.bn = nn.LayerNorm(512)
@@ -76,8 +78,9 @@ class Encoder(nn.Module):
         y = torch.flatten(self.network(x)).view(-1)
 
         y = self.fc(y.reshape(-1, 1024)).squeeze(0)
-        y = nn.LeakyReLU()(y)
         y = self.bn(y)
+
+        y = self.activation(y)
         if seq:
             y = y.reshape(seq_len, batch_size, -1)
         return y

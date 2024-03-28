@@ -116,7 +116,7 @@ def evaluate(config, epoch, pipeline, gen):
     images = pipeline(
         batch_size=16,
         generator=gen, 
-        num_inference_steps = 50,
+        num_inference_steps = 35,
     ).images
 
     # Make a grid out of the images

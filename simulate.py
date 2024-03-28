@@ -2,15 +2,16 @@
 import torch
 import numpy as np
 import wandb
-from diffusers import DDPMPipeline
+from diffusers import DDIMPipeline
 def simulate(agents, env, num_interaction_episodes, writer, train=True):
     generator = torch.manual_seed(1)
 
     for epi in range(num_interaction_episodes):
         act = []
         det = []
-        pipeline = DDPMPipeline.from_pretrained("ddpm-dlc")
+        pipeline = DDIMPipeline.from_pretrained("ddim")
         pipeline = pipeline.to(agents[0].device)
+        observation, _ = env.reset()
         for x in range(env.num_agents):
 
             posterior, deterministic = agents[x].rssm.recurrent_model_input_init(1)
@@ -30,7 +31,6 @@ def simulate(agents, env, num_interaction_episodes, writer, train=True):
             embedded_observation = agents[x].encoder(
             torch.from_numpy(observation[x]).float().to(agents[0].device) )
             emb.append(embedded_observation)
-
         score = np.zeros(env.num_agents)
         score_lst = []
         done = np.zeros(env.num_agents)
@@ -83,12 +83,7 @@ def simulate(agents, env, num_interaction_episodes, writer, train=True):
 
                     print(">>>Saving Parameters<<<")
                     for j in range(env.num_agents):
-                        agents[j].train(writer, ddpm=pipeline(batch_size=30,
-                        num_inference_steps=200,
-                        generator=generator,
-
-                        output_type="np"
-                        )[0])                    
+                        agents[j].train(writer)                    
                         wandb.log(data=writer)
 
                 else:

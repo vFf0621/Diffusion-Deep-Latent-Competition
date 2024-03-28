@@ -8,11 +8,11 @@ from accelerate import notebook_launcher
 from torch.utils.data import DataLoader
 from TrainingLoop import train_loop, evaluate
 from diffusers.optimization import get_cosine_schedule_with_warmup
-
+import diffusers
 
 def train_diffusion_model():
     """
-    Create a UNet2D model for image diffusion and trains it on the car simulation data using the DDIMScheduler.
+    Create a UNet2D model for image diffusion and trains it on the car simulation data using the DDIMPipeline/DDIMScheduler.
     """
     num_train_timesteps = 1000
     
@@ -23,10 +23,9 @@ def train_diffusion_model():
         in_channels=3,  # the number of input channels, 3 for RGB images
         out_channels=3,  # the number of output channels
         layers_per_block=2,  # how many ResNet layers to use per UNet block
-        block_out_channels=(128, 128, 256, 256, 256,512),  # the number of output channels for each UNet block
+        block_out_channels=(128, 128, 256, 256, 256),  # the number of output channels for each UNet block
         attention_head_dim=16,
         down_block_types=(
-            "DownBlock2D",  # a regular ResNet downsampling block
             "DownBlock2D",
             "DownBlock2D",  # a regular ResNet downsampling block
             "DownBlock2D",  # a regular ResNet downsampling block
@@ -39,12 +38,11 @@ def train_diffusion_model():
             "UpBlock2D",
             "UpBlock2D",
             "UpBlock2D",
-            "UpBlock2D",
         ),
     )
     noise_gen = torch.manual_seed(config.seed)
     
-    train_dataset = torch.load("pretrained_parameters/ds_1")
+    train_dataset = torch.load("pretrained_parameters/ds_3")
     train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True)
     
     noise_scheduler = DDIMScheduler(num_train_timesteps=num_train_timesteps)
@@ -62,6 +60,6 @@ def train_diffusion_model():
 
 
 if __name__ == '__main__':
-    train_diffusion_model()
-    
-    
+    #train_diffusion_model()
+    pipeline = diffusers.DDIMPipeline.from_pretrained("ddim").to("cuda")
+    evaluate(TrainingConfig, 0, pipeline, None)

@@ -24,6 +24,13 @@ class ImgChLayerNorm(nn.Module):
         x = self.norm(x)
         x = x.permute(0, 3, 1, 2)
         return x
+def symlog(x):
+    return torch.sign(x) * torch.log(torch.abs(x) + 1.0)
+
+
+def symexp(x):
+    return torch.sign(x) * (torch.exp(torch.abs(x)) - 1.0)
+
 
 def horizontal_forward(network, x, y=None, input_shape=(-1,), output_shape=(-1,)):
     batch_with_horizon_shape = x.shape[: -len(input_shape)]
@@ -44,13 +51,13 @@ def build_network(input_size, hidden_size, num_layers, activation, output_size):
     activation = getattr(nn, activation)()
     layers = []
     layers.append(nn.Linear(input_size, hidden_size))
-    layers.append(activation)
     layers.append(nn.LayerNorm(hidden_size))
+    layers.append(activation)
 
     for i in range(num_layers - 2):
         layers.append(nn.Linear(hidden_size, hidden_size))
-        layers.append(activation)
         layers.append(nn.LayerNorm(hidden_size))
+        layers.append(activation)
 
     layers.append(nn.Linear(hidden_size, output_size))
 
@@ -74,7 +81,7 @@ def create_normal_dist(
     mean_scale=1,
     init_std=1,
     min_std=0.1,
-    activation=torch.tanh,
+    activation=nn.Identity(),
     event_shape=None,
 ):
     if std == None:
@@ -86,7 +93,7 @@ def create_normal_dist(
         std = init_std - F.softplus(init_std - std)
         std = min_std + F.softplus(std - min_std)
     else:
-        mean = nn.Identity()(x)
+        mean = x
     dist = torch.distributions.Normal(mean, std)
     if event_shape:
         dist = torch.distributions.Independent(dist, event_shape)

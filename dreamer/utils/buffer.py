@@ -65,6 +65,17 @@ class ReplayBuffer(object):
         action = torch.as_tensor(self.action[sample_index], device=self.device)
         reward = torch.as_tensor(self.reward[sample_index], device=self.device)
         done = torch.as_tensor(self.done[sample_index], device=self.device)
+        for i in range(batch_size):
+            done_indices = (done[i].squeeze() > 0).nonzero()
+            if done_indices.nelement() != 0:  # If there's a 'done' in the sequence
+                first_done_index = done_indices[0, 0]
+                if first_done_index + 1 < chunk_size:
+                    observation[i, first_done_index + 1:] = observation[i, first_done_index]
+                    next_observation[i, first_done_index + 1:] = next_observation[i, first_done_index]
+                    action[i, first_done_index + 1:] = action[i, first_done_index]
+                    reward[i, first_done_index + 1:] = reward[i, first_done_index]
+                    done[i, first_done_index + 1:] = 1
+
 
         sample = AttrDict(
             {

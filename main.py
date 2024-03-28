@@ -33,21 +33,11 @@ def main(config_file1, config_file2):
 
         agents = []
         for i in range(env.num_agents):
-            if i % 2 ==1:
-                if config2.algorithm == "dreamer-v3":
-                    agent = DreamerV3(i,obs_shape, action_size, dict(), device, config2, LSTM=0)
-                else:
-                    agent = DreamerV3(i,obs_shape, action_size, dict(), device, config2,LSTM=1)
-                if config2.parameters.load:
-                    agent.load_state_dict()
+            if config2.algorithm == "dreamer-v3":
+                agent = DreamerV3(i,obs_shape, action_size, dict(), device, config2, LSTM=0)
+            if config2.parameters.load:
+                agent.load_state_dict()
 
-            else:
-                if config1.algorithm == "dreamer-v3":
-                    agent = DreamerV3(i,obs_shape, action_size, dict(), device, config1, LSTM=0)
-                else:
-                    agent = DreamerV3(i,obs_shape, action_size, dict(), device, config1, LSTM=1)
-                if config1.parameters.load:
-                    agent.load_state_dict()
 
             agents.append(agent)
             # Train each agent individually first

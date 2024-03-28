@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
 
-from dreamer.utils.utils import create_normal_dist, build_network, horizontal_forward
+from dreamer.utils.utils import create_normal_dist, build_network, horizontal_forward, symexp
 
 '''
 Here is the Recurrent State Space Machine which contains a GRU or LSTM to hold
@@ -40,43 +40,47 @@ class LayerNormGRUCell(nn.Module):
         super(LayerNormGRUCell, self).__init__()
         self.hidden_size = hidden_size
 
-        # Gates linear transformations (input to hidden)
+        # Input to hidden connections
         self.W_ir = nn.Linear(input_size, hidden_size)
         self.W_iz = nn.Linear(input_size, hidden_size)
         self.W_in = nn.Linear(input_size, hidden_size)
 
-        # Gates linear transformations (hidden to hidden)
+        # Hidden to hidden connections, without biases
+        # (biases are not needed because they will be added by the input to hidden transformations)
         self.W_hr = nn.Linear(hidden_size, hidden_size, bias=False)
         self.W_hz = nn.Linear(hidden_size, hidden_size, bias=False)
         self.W_hn = nn.Linear(hidden_size, hidden_size, bias=False)
 
-        # Layer normalization for each gate
-        self.LN_r = nn.LayerNorm(hidden_size)
-        self.LN_z = nn.LayerNorm(hidden_size)
-        self.LN_n = nn.LayerNorm(hidden_size)
+        # Layer normalization
+        self.LN_ir = nn.LayerNorm(hidden_size)
+        self.LN_iz = nn.LayerNorm(hidden_size)
+        self.LN_in = nn.LayerNorm(hidden_size)
+        self.LN_hr = nn.LayerNorm(hidden_size)
+        self.LN_hz = nn.LayerNorm(hidden_size)
+        self.LN_hn = nn.LayerNorm(hidden_size)
 
-    def forward(self, x, h_prev):
+    def forward(self, x, h):
         """
-        Forward pass of the LayerNorm GRU cell.
-        
+        Forward pass through the GRU cell.
+
         Args:
-            x: Input tensor (batch, input_size).
-            h_prev: Previous hidden state (batch, hidden_size).
-        
+            x: Input tensor of shape (batch, input_size).
+            h: Hidden state tensor of shape (batch, hidden_size) from the previous timestep.
+
         Returns:
-            h_next: Next hidden state (batch, hidden_size).
+            h_next: Next hidden state tensor of shape (batch, hidden_size).
         """
         # Reset gate
-        r_t = torch.sigmoid(self.LN_r(self.W_ir(x) + self.W_hr(h_prev)))
+        r = torch.sigmoid(self.LN_ir(self.W_ir(x)) + self.LN_hr(self.W_hr(h)))
         
         # Update gate
-        z_t = torch.sigmoid(self.LN_z(self.W_iz(x) + self.W_hz(h_prev)))
+        z = torch.sigmoid(self.LN_iz(self.W_iz(x)) + self.LN_hz(self.W_hz(h)))
         
-        # New gate
-        n_t = torch.tanh(self.LN_n(self.W_in(x) + r_t * self.W_hn(h_prev)))
+        # Candidate hidden state
+        n = torch.tanh(self.LN_in(self.W_in(x)) + r * self.LN_hn(self.W_hn(h)))
         
         # Next hidden state
-        h_next = (1 - z_t) * n_t + z_t * h_prev
+        h_next = (1 - z) * n + z * h
         
         return h_next
 
@@ -228,7 +232,8 @@ class RepresentationModel(nn.Module):
     def forward(self, embedded_observation, deterministic):
         if embedded_observation is None or deterministic is None:
             return
-        x = self.network(torch.cat((embedded_observation.squeeze(0), deterministic.squeeze(0)), -1))
+
+        x = self.network(torch.cat((embedded_observation, deterministic.squeeze(0)), -1))
         posterior_dist = create_normal_dist(x, min_std=self.config.min_std)
         posterior = posterior_dist.rsample()
 
@@ -247,14 +252,16 @@ class RewardModel(nn.Module):
             self.config.hidden_size,
             self.config.num_layers,
             self.config.activation,
-            1,
+            2,
         )
 
-    def forward(self, posterior, deterministic):
+    def forward(self, posterior, deterministic, eval = False):
         x = horizontal_forward(
-            self.network, posterior, deterministic, output_shape=(1,)
+            self.network, posterior, deterministic, output_shape=(2,)
         )
-        dist = create_normal_dist(x, std=1, event_shape=1)
+        if eval:
+            x = symexp(x)
+        dist = create_normal_dist(x, init_std = 0.3, event_shape=1)          
         return dist
 
 
