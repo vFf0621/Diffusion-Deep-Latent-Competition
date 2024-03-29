@@ -79,13 +79,13 @@ class DreamerV3:
             self.model_params += list(self.continue_predictor.parameters())
 
         self.model_optimizer = torch.optim.Adam(
-            self.model_params, lr=self.config.model_learning_rate, eps=1e-08, weight_decay=0.0001
+            self.model_params, lr=self.config.model_learning_rate, eps=1e-08, 
         )
         self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=self.config.actor_learning_rate, weight_decay=0.0001
+            self.actor.parameters(), lr=self.config.actor_learning_rate, eps=1e-5
         )
         self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(), lr=self.config.critic_learning_rate, weight_decay=0.0001
+            self.critic.parameters(), lr=self.config.critic_learning_rate, eps=1e-5
         )
 
         self.dynamic_learning_infos = DynamicInfos(self.device)
