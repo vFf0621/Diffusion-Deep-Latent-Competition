@@ -51,13 +51,13 @@ def build_network(input_size, hidden_size, num_layers, activation, output_size):
     activation = getattr(nn, activation)()
     layers = []
     layers.append(nn.Linear(input_size, hidden_size,))
-    layers.append(activation)
     layers.append(nn.LayerNorm(hidden_size))
+    layers.append(activation)
 
     for i in range(num_layers - 2):
         layers.append(nn.Linear(hidden_size, hidden_size, ))
-        layers.append(activation)
         layers.append(nn.LayerNorm(hidden_size))
+        layers.append(activation)
 
     layers.append(nn.Linear(hidden_size, output_size))
 
