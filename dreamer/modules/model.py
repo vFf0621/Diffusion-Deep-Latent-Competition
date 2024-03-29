@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
 
-from dreamer.utils.utils import create_normal_dist, build_network, horizontal_forward, symexp
+from dreamer.utils.utils import create_normal_dist, build_network, horizontal_forward, symexp, initialize_weights
 
 '''
 Here is the Recurrent State Space Machine which contains a GRU or LSTM to hold
@@ -50,7 +50,7 @@ class LayerNormGRUCell(nn.Module):
         self.W_hr = nn.Linear(hidden_size, hidden_size, bias=False)
         self.W_hz = nn.Linear(hidden_size, hidden_size, bias=False)
         self.W_hn = nn.Linear(hidden_size, hidden_size, bias=False)
-
+        
         # Layer normalization
         self.LN_ir = nn.LayerNorm(hidden_size)
         self.LN_iz = nn.LayerNorm(hidden_size)
@@ -58,6 +58,7 @@ class LayerNormGRUCell(nn.Module):
         self.LN_hr = nn.LayerNorm(hidden_size)
         self.LN_hz = nn.LayerNorm(hidden_size)
         self.LN_hn = nn.LayerNorm(hidden_size)
+        self.apply(initialize_weights)
 
     def forward(self, x, h):
         """
@@ -99,6 +100,7 @@ class GRU(nn.Module):
         self.linear = nn.Linear(
             self.stochastic_size + action_size, self.config.hidden_size
         )
+        self.linear.apply(initialize_weights)
         self.cur_hx = None
         self.recurrent = LayerNormGRUCell(self.config.hidden_size, self.deterministic_size)
         self.hx = torch.zeros(self.deterministic_size).to(self.device)
@@ -202,10 +204,10 @@ class TransitionModel(nn.Module):
             self.config.activation,
             self.stochastic_size * 2,
         )
-
+        self.network.apply(initialize_weights)
     def forward(self, x):
         x = self.network(x)
-        prior_dist = create_normal_dist(x)
+        prior_dist = create_normal_dist(x, min_std=self.config.min_std)
         prior = prior_dist.rsample()
         return prior_dist, prior
 
@@ -228,6 +230,7 @@ class RepresentationModel(nn.Module):
             self.config.activation,
             self.stochastic_size * 2,
         )
+        self.network.apply(initialize_weights)
 
     def forward(self, embedded_observation, deterministic):
         if embedded_observation is None or deterministic is None:
@@ -254,6 +257,7 @@ class RewardModel(nn.Module):
             self.config.activation,
             2,
         )
+        self.network.apply(initialize_weights)
 
     def forward(self, posterior, deterministic, eval = False):
         x = horizontal_forward(
@@ -261,7 +265,7 @@ class RewardModel(nn.Module):
         )
         if eval:
             x = symexp(x)
-        dist = create_normal_dist(x, init_std = 0.3, event_shape=1)          
+        dist = create_normal_dist(x, init_std = 1, event_shape=1)          
         return dist
 
 
@@ -279,6 +283,7 @@ class ContinueModel(nn.Module):
             self.config.activation,
             2,
         )
+        self.network.apply(initialize_weights)
 
     def forward(self, posterior, deterministic):
         x = horizontal_forward(

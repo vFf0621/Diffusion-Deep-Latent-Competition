@@ -31,6 +31,7 @@ class Encoder(nn.Module):
                 self.config.depth * 1,
                 self.config.kernel_size,
                 self.config.stride+1,
+                bias=False
             ),
             ImgChLayerNorm(self.config.depth * 1),
             activation,
@@ -40,6 +41,8 @@ class Encoder(nn.Module):
                 self.config.depth * 2,
                 self.config.kernel_size,
                 self.config.stride,
+                bias=False
+
             ),
             ImgChLayerNorm(self.config.depth * 2),
             activation,
@@ -49,6 +52,8 @@ class Encoder(nn.Module):
                 self.config.depth * 4,
                 self.config.kernel_size,
                 self.config.stride,
+                bias=False
+
             ),
             ImgChLayerNorm(self.config.depth * 4),
 
@@ -59,14 +64,17 @@ class Encoder(nn.Module):
                 self.config.depth * 8,
                 self.config.kernel_size,
                 self.config.stride,
+                bias=False
+
             ),
             ImgChLayerNorm(self.config.depth * 8),
             activation,
 
         )
-        self.bn = nn.LayerNorm(512)
-        self.fc = nn.Linear(1024, 512)
+        self.bn = nn.LayerNorm(1024)
+        self.fc = nn.Linear(1024, 1024)
         self.network.apply(initialize_weights)
+        self.fc.apply(initialize_weights)
 
     def forward(self, x, seq=0):
         if seq:

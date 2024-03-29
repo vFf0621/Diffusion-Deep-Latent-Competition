@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from dreamer.utils.utils import build_network, create_normal_dist, horizontal_forward, symexp
+from dreamer.utils.utils import build_network, create_normal_dist, horizontal_forward, symexp, initialize_weights
 
 '''
 
@@ -23,6 +23,7 @@ class Critic(nn.Module):
             self.config.activation,
             2,
         )
+        self.network.apply(initialize_weights)
 
     def forward(self, posterior, deterministic, eval = False):
         x = horizontal_forward(

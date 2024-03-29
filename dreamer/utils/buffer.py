@@ -70,10 +70,10 @@ class ReplayBuffer(object):
             if done_indices.nelement() != 0:  # If there's a 'done' in the sequence
                 first_done_index = done_indices[0, 0]
                 if first_done_index + 1 < chunk_size:
-                    observation[i, first_done_index + 1:] = observation[i, first_done_index]
-                    next_observation[i, first_done_index + 1:] = next_observation[i, first_done_index]
-                    action[i, first_done_index + 1:] = action[i, first_done_index]
-                    reward[i, first_done_index + 1:] = reward[i, first_done_index]
+                    observation[i, first_done_index + 1:] = 0
+                    next_observation[i, first_done_index + 1:] =0
+                    action[i, first_done_index + 1:] = 0
+                    reward[i, first_done_index + 1:] = 0
                     done[i, first_done_index + 1:] = 1
 
 

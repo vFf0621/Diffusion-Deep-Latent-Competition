@@ -7,7 +7,7 @@ def attrdict_monkeypatch_fix():
 attrdict_monkeypatch_fix()
 
 import os
-
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -50,14 +50,14 @@ def build_network(input_size, hidden_size, num_layers, activation, output_size):
     assert num_layers >= 2, "num_layers must be at least 2"
     activation = getattr(nn, activation)()
     layers = []
-    layers.append(nn.Linear(input_size, hidden_size))
-    layers.append(nn.LayerNorm(hidden_size))
+    layers.append(nn.Linear(input_size, hidden_size,))
     layers.append(activation)
+    layers.append(nn.LayerNorm(hidden_size))
 
     for i in range(num_layers - 2):
-        layers.append(nn.Linear(hidden_size, hidden_size))
-        layers.append(nn.LayerNorm(hidden_size))
+        layers.append(nn.Linear(hidden_size, hidden_size, ))
         layers.append(activation)
+        layers.append(nn.LayerNorm(hidden_size))
 
     layers.append(nn.Linear(hidden_size, output_size))
 
@@ -67,14 +67,29 @@ def build_network(input_size, hidden_size, num_layers, activation, output_size):
 
 
 def initialize_weights(m):
-    if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
+    given_scale = 1
+    if isinstance(m, nn.Linear):
+        #in_num = m.in_features
+        #out_num = m.out_features
+        #denoms = (in_num + out_num) / 2.0
+        #scale = given_scale / denoms
+        #limit = np.sqrt(3 * scale)
+       # nn.init.uniform_(m.weight.data, a=-limit, b=limit)
         nn.init.orthogonal_(m.weight.data)
-        nn.init.constant_(m.bias.data, 0)
-    elif isinstance(m, nn.Linear):
+        if hasattr(m.bias, "data"):
+            m.bias.data.fill_(0.0)
+    elif isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        #space = m.kernel_size[0] * m.kernel_size[1]
+        #in_num = space * m.in_channels
+        #out_num = space * m.out_channels
+        #denoms = (in_num + out_num) / 2.0
+        #scale = given_scale / denoms
+        #limit = np.sqrt(3 * scale)
+        #nn.init.uniform_(m.weight.data, a=-limit, b=limit)
         nn.init.orthogonal_(m.weight.data)
-        nn.init.constant_(m.bias.data, 0)
-
-
+        if hasattr(m.bias, "data"):
+           m.bias.data.fill_(0.0)
+    
 def create_normal_dist(
     x,
     std=None,
@@ -93,7 +108,7 @@ def create_normal_dist(
         std = init_std - F.softplus(init_std - std)
         std = min_std + F.softplus(std - min_std)
     else:
-        mean = x
+        mean = activation(x)
     dist = torch.distributions.Normal(mean, std)
     if event_shape:
         dist = torch.distributions.Independent(dist, event_shape)

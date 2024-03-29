@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.distributions import TanhTransform
 
-from dreamer.utils.utils import create_normal_dist, build_network
+from dreamer.utils.utils import create_normal_dist, build_network,initialize_weights
 
 '''
 
@@ -26,20 +26,20 @@ class Actor(nn.Module):
             self.config.activation,
             action_size*2,
         )
-
+        self.network.apply(initialize_weights)
     def forward(self, posterior, deterministic):
         x = torch.cat((posterior.squeeze(0), deterministic.squeeze(0)), -1)
         x = self.network(x)
         dist = create_normal_dist(
                 x,
                 None,
-                init_std = 0.3,
+                init_std = 1,
                 min_std=self.config.min_std,
                 activation=nn.Identity(),
         )
         action = dist.rsample()
         log_probs = dist.log_prob(action)
-        log_probs -= torch.log(1-torch.tanh(action).pow(2)+10e-8)
+        log_probs -= torch.log(1-torch.tanh(action).pow(2)+1e-8)
         log_probs = log_probs.sum(-1).unsqueeze(-1)
 
         return action, log_probs

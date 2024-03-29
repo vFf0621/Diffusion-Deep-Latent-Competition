@@ -15,7 +15,8 @@ from dreamer.utils.utils import (
     create_normal_dist,
     DynamicInfos,
     find_dir,
-    symlog
+    symlog,
+    initialize_weights
 )
 from dreamer.utils.buffer import ReplayBuffer
 
@@ -78,18 +79,17 @@ class DreamerV3:
             self.model_params += list(self.continue_predictor.parameters())
 
         self.model_optimizer = torch.optim.Adam(
-            self.model_params, lr=self.config.model_learning_rate, eps=1e-08
+            self.model_params, lr=self.config.model_learning_rate, eps=1e-08, weight_decay=0.0001
         )
         self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=self.config.actor_learning_rate,eps=1e-5
+            self.actor.parameters(), lr=self.config.actor_learning_rate, weight_decay=0.0001
         )
         self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(), lr=self.config.critic_learning_rate,eps=1e-5
+            self.critic.parameters(), lr=self.config.critic_learning_rate, weight_decay=0.0001
         )
 
         self.dynamic_learning_infos = DynamicInfos(self.device)
         self.behavior_learning_infos = DynamicInfos(self.device)
-
         self.writer = writer
         self.num_total_episode = 0
         print("Agent " + str(self.agent_id)+ " Initiated!")
@@ -100,15 +100,24 @@ class DreamerV3:
         for target_param, param in zip(target.parameters(), source.parameters()):
             target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
 
-    def train(self, metrics):
+    def train(self, metrics, pipeline):
+        x = pipeline(batch_size = 50, num_inference_steps=50, output_type="np", return_dict = False)[0]
+        x = torch.from_numpy(x).to(self.device).float().squeeze(0).permute((0, 3,1,2))/x.max()
+        emb = self.encoder(x)
+
         for _ in range(self.config.train_iterations):
             data = self.buffer.sample(
                     self.config.batch_size, self.config.batch_length
                 )
+
             for _ in range(self.config.collect_interval):
-                
-                posteriors, det = self.dynamic_learning(data, metrics)
-                self.latent_imagination(posteriors, metrics)
+
+                _, deterministic = self.dynamic_learning(data, metrics)
+                deterministic = self.rssm.recurrent_model.input_init(50)
+                #deterministic = self.rssm.recurrent_model.input_init(100)
+                _, posterior = self.rssm.representation_model(emb, deterministic.clone().detach())
+
+                self.latent_imagination(posterior, deterministic, metrics)
 
     def dynamic_learning(self, data, metrics):
         prior, deterministic = self.rssm.recurrent_model_input_init(len(data.action))
@@ -169,7 +178,7 @@ class DreamerV3:
         reward_dist = self.reward_predictor(
             posterior_info.posteriors, posterior_info.deterministics
         )
-        reward_loss = nn.MSELoss()(reward_dist.rsample(), symlog(data.reward[:, 1:]))
+        reward_loss = nn.MSELoss()(reward_dist.mean, symlog(data.reward[:, 1:]))
 
         prior_dist = create_normal_dist(
             posterior_info.prior_dist_means,
@@ -182,17 +191,17 @@ class DreamerV3:
             event_shape=1,
         )
         prior_dist_sg = create_normal_dist(
-            posterior_info.prior_dists_sg_mean,
-            posterior_info.prior_dists_sg_std,
+            posterior_info.prior_dists_sg_mean.detach(),
+            posterior_info.prior_dists_sg_std.detach(),
             event_shape=1,
         )
         posterior_dist_sg = create_normal_dist(
-            posterior_info.posterior_dists_sg_mean,
-            posterior_info.posterior_dists_sg_std,
+            posterior_info.posterior_dists_sg_mean.detach(),
+            posterior_info.posterior_dists_sg_std.detach(),
             event_shape=1,
         )
-        kl1 = 0.1 * torch.distributions.kl.kl_divergence(posterior_dist, prior_dist_sg)
-        kl2 = 0.5 * torch.distributions.kl.kl_divergence(posterior_dist_sg, prior_dist)
+        kl1 = torch.distributions.kl.kl_divergence(posterior_dist, prior_dist_sg)
+        kl2 =  torch.distributions.kl.kl_divergence(posterior_dist_sg, prior_dist)
         kl_divergence_loss = torch.max(torch.ones_like(kl1, device=kl1.device), kl1).mean()+torch.max(torch.ones_like(kl2, device=kl2.device), kl2).mean()
         model_loss = (
             self.config.kl_divergence_scale * kl_divergence_loss
@@ -203,7 +212,7 @@ class DreamerV3:
             model_loss += continue_loss.mean()
 
         self.model_optimizer.zero_grad()
-        model_loss.backward()
+        model_loss.backward(retain_graph=True)
         nn.utils.clip_grad_norm_(
             self.model_params,
             self.config.clip_grad*10,
@@ -220,13 +229,11 @@ class DreamerV3:
         self.soft_update(self.rssm.transition_model_target, self.rssm.transition_model)
         self.soft_update(self.target_encoder, self.encoder)
 
-    def latent_imagination(self, states, metrics):
+    def latent_imagination(self, states, det, metrics):
         state = states.reshape(-1, self.config.stochastic_size)
-    
-        indx = random.sample(list(range(state.shape[0])),k=300)
-        state = state[indx]
-        deterministic = self.rssm.recurrent_model.input_init(300)
+        det = det.reshape(-1, self.config.deterministic_size)
 
+        deterministic = self.rssm.recurrent_model.input_init(50)
         # continue_predictor reinit
         for t in range(self.config.horizon_length):
             action, log_prob = self.actor(state, deterministic)
@@ -265,7 +272,7 @@ class DreamerV3:
         ).rsample()
         values = self.critic(
             behavior_learning_infos.priors, behavior_learning_infos.deterministics, eval=True
-        ).rsample()
+        ).mean
 
         if self.config.use_continue_flag:
             continues = self.continue_predictor(
@@ -295,31 +302,38 @@ class DreamerV3:
             self.config.clip_grad,
             norm_type=self.config.grad_norm_type,
         )
-        self.actor_optimizer.step()
-        with torch.no_grad():
-            values = self.targ_critic(
-            behavior_learning_infos.priors, behavior_learning_infos.deterministics).mean
+        predicted_rewards = self.reward_predictor(
+            behavior_learning_infos.priors, behavior_learning_infos.deterministics, eval = True
+        ).rsample()
 
-            lambda_values_no_grad = compute_lambda_values(
-            predicted_rewards.detach(),
-            values,
+        targ_value = self.targ_critic(
+            behavior_learning_infos.priors.detach(),
+            behavior_learning_infos.deterministics.detach(),
+    
+            ).mean.detach()
+
+        targ_lambda_values = compute_lambda_values(
+           predicted_rewards,
+           targ_value,
             continues,
-            self.config.horizon_length,
+           self.config.horizon_length,
             self.device,
             behavior_learning_infos.log_probs,
             self.config.lambda_,
-            0
-            )
+            self.config.alpha
+        )
+
+        self.actor_optimizer.step()
         value_dist = self.critic(
             behavior_learning_infos.priors.detach()[:, :-1],
             behavior_learning_infos.deterministics.detach()[:, :-1],
     
             )
-        value_loss = nn.MSELoss()(value_dist.mean.squeeze(-1), symlog(lambda_values_no_grad.detach().squeeze(1)))#+torch.max(torch.ones_like(value_dist.mean), torch.abs((lambda_values.detach())-value_dist.mean)/value_dist.stddev.pow(2)).mean()
+        value_loss = nn.MSELoss()(value_dist.mean.squeeze(-1), symlog(targ_lambda_values.squeeze(1)))#+torch.max(torch.ones_like(value_dist.mean), torch.abs((lambda_values.detach())-value_dist.mean)/value_dist.stddev.pow(2)).mean()
         metrics["critic_loss_" + str(id)] = value_loss.mean().item()
 
         self.critic_optimizer.zero_grad()
-        value_loss.backward()
+        value_loss.backward(retain_graph=True)
         nn.utils.clip_grad_norm_(
             self.critic.parameters(),
             self.config.clip_grad,
