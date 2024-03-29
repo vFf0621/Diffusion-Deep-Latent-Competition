@@ -101,9 +101,9 @@ class DreamerV3:
             target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
 
     def train(self, metrics, pipeline):
-        x = pipeline(batch_size = 50, num_inference_steps=50, output_type="np", return_dict = False)[0]
-        x = torch.from_numpy(x).to(self.device).float().squeeze(0).permute((0, 3,1,2))/x.max()
-        emb = self.encoder(x)
+        #x = pipeline(batch_size = 50, num_inference_steps=50, output_type="np", return_dict = False)[0]
+        #x = torch.from_numpy(x).to(self.device).float().squeeze(0).permute((0, 3,1,2))/x.max()
+        #emb = self.encoder(x)
 
         for _ in range(self.config.train_iterations):
             data = self.buffer.sample(
@@ -112,10 +112,10 @@ class DreamerV3:
 
             for _ in range(self.config.collect_interval):
 
-                _, deterministic = self.dynamic_learning(data, metrics)
-                deterministic = self.rssm.recurrent_model.input_init(50)
+                posterior, deterministic = self.dynamic_learning(data, metrics)
+                #deterministic = self.rssm.recurrent_model.input_init(50)
                 #deterministic = self.rssm.recurrent_model.input_init(100)
-                _, posterior = self.rssm.representation_model(emb, deterministic.clone().detach())
+                #_, posterior = self.rssm.representation_model(emb, deterministic.clone().detach())
 
                 self.latent_imagination(posterior, deterministic, metrics)
 
@@ -232,8 +232,10 @@ class DreamerV3:
     def latent_imagination(self, states, det, metrics):
         state = states.reshape(-1, self.config.stochastic_size)
         det = det.reshape(-1, self.config.deterministic_size)
-
-        deterministic = self.rssm.recurrent_model.input_init(50)
+        indx = random.choices(list(range(state.shape[0])), k=200)
+        det = det[indx]
+        state = state[indx]
+        deterministic = self.rssm.recurrent_model.input_init(200)
         # continue_predictor reinit
         for t in range(self.config.horizon_length):
             action, log_prob = self.actor(state, deterministic)
