@@ -43,7 +43,6 @@ class Decoder(nn.Module):
                 self.config.depth * 4,
                 self.config.kernel_size,
                 self.config.stride,
-                bias=False
             ),
             ImgChLayerNorm(self.config.depth * 4),
 
@@ -54,8 +53,6 @@ class Decoder(nn.Module):
                 self.config.depth * 2,
                 self.config.kernel_size,
                 self.config.stride,
-                bias=False
-
             ),
             ImgChLayerNorm(self.config.depth * 2),
 
@@ -66,9 +63,7 @@ class Decoder(nn.Module):
                 self.config.depth * 1,
                 self.config.kernel_size+1,
                 self.config.stride,
-                output_padding=(1, 1),
-                bias=False
-
+                output_padding=(1, 1)
             ),
             ImgChLayerNorm(self.config.depth * 1),
 
@@ -79,12 +74,8 @@ class Decoder(nn.Module):
                 self.observation_shape[0],
                 self.config.kernel_size+1,
                 self.config.stride+1,
-                bias=True
-
             ),
-            ImgChLayerNorm(self.observation_shape[0]),
-
-            activation,
+            nn.Sigmoid()
 
             )
         self.linear = nn.Sequential(nn.Linear(config.parameters.dreamer.deterministic_size + config.parameters.dreamer.stochastic_size, 1024),
