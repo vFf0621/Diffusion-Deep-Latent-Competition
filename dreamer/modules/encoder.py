@@ -26,11 +26,15 @@ class Encoder(nn.Module):
         self.observation_shape = observation_shape
         self.activation = activation
         self.network = nn.Sequential(
+            ImgChLayerNorm(observation_shape[0]),
+
             nn.Conv2d(
                 self.observation_shape[0],
                 self.config.depth * 1,
                 self.config.kernel_size,
                 self.config.stride+1,
+                bias=False
+
             ),
             ImgChLayerNorm(self.config.depth * 1),
             activation,
@@ -40,6 +44,8 @@ class Encoder(nn.Module):
                 self.config.depth * 2,
                 self.config.kernel_size,
                 self.config.stride,
+                bias=False
+
             ),
             ImgChLayerNorm(self.config.depth * 2),
             activation,
@@ -49,6 +55,7 @@ class Encoder(nn.Module):
                 self.config.depth * 4,
                 self.config.kernel_size,
                 self.config.stride,
+                bias=False
             ),
             ImgChLayerNorm(self.config.depth * 4),
 
@@ -59,13 +66,15 @@ class Encoder(nn.Module):
                 self.config.depth * 8,
                 self.config.kernel_size,
                 self.config.stride,
+                bias=False
             ),
             ImgChLayerNorm(self.config.depth * 8),
             activation,
 
         )
-        self.bn = nn.LayerNorm(512)
-        self.fc = nn.Linear(1024, 512)
+        z_shape=config.parameters.dreamer.embedded_state_size
+        self.bn = nn.LayerNorm(z_shape)
+        self.fc = nn.Linear(1024, z_shape)
         self.network.apply(initialize_weights)
 
     def forward(self, x, seq=0):
@@ -81,6 +90,39 @@ class Encoder(nn.Module):
         y = self.bn(y)
 
         y = self.activation(y)
+
         if seq:
             y = y.reshape(seq_len, batch_size, -1)
+        return y
+    
+
+
+class ImagEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()  
+        self.config = config.parameters.dreamer.encoder
+
+        self.activation = nn.SiLU()
+        self.z_shape = z_shape=config.parameters.dreamer.embedded_state_size
+        self.bn = nn.LayerNorm(z_shape // 2)
+        self.bn1 = nn.LayerNorm(z_shape)
+        self.bn2 = nn.LayerNorm(z_shape)
+
+        self.fc = nn.Linear(z_shape, z_shape//2, bias=False)
+        self.fc2 = nn.Linear(z_shape//2, z_shape)
+        self.fc.apply(initialize_weights)
+        self.fc2.apply(initialize_weights)
+
+    def forward(self, x, seq=0):
+        batch_size = x.shape[0]
+        y0 = self.fc(x.reshape(-1, self.z_shape)).squeeze(0)
+        y= self.bn(y0)
+
+        y = self.activation(y)
+        y = self.fc2(y)+ x
+        y = self.bn1(y)
+
+        y = self.activation(y) 
+        if seq:
+            y = y.reshape(batch_size, -1)
         return y

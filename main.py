@@ -1,7 +1,7 @@
 
 import argparse
 import wandb
-from dreamer.algorithms.dreamerv3LSTM import DreamerV3
+from dreamer.algorithms.dreamer import DreamerV3
 from dreamer.utils.utils import load_config, get_base_directory
 from simulate import simulate
 import gymnasium as gym

@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
 
-from dreamer.utils.utils import create_normal_dist, build_network, horizontal_forward, symexp
+from dreamer.utils.utils import create_normal_dist, build_network, horizontal_forward, symexp, initialize_weights
 
 '''
 Here is the Recurrent State Space Machine which contains a GRU or LSTM to hold
@@ -24,9 +24,6 @@ class RSSM(nn.Module):
         if not lstm:
             print("Agent Recurrent Type: GRU")
             self.recurrent_model = GRU(action_size, config)
-        else:
-            print("Agent Recurrent Type: LSTM")
-            self.recurrent_model = LSTM(action_size, config)
 
         self.transition_model = TransitionModel(config)
         self.representation_model = RepresentationModel(config)
@@ -99,17 +96,18 @@ class GRU(nn.Module):
         self.linear = nn.Linear(
             self.stochastic_size + action_size, self.config.hidden_size
         )
+        self.bn = nn.LayerNorm(self.config.hidden_size)
         self.cur_hx = None
         self.recurrent = LayerNormGRUCell(self.config.hidden_size, self.deterministic_size)
         self.hx = torch.zeros(self.deterministic_size).to(self.device)
-
+        self.apply(initialize_weights)
     def forward(self, embedded_state, action):
         if action is None or embedded_state is None:
             return
         if not isinstance(action, torch.Tensor):
             action = torch.from_numpy(action).to(self.hx.device)
         x = torch.cat((embedded_state.squeeze(0), action.squeeze(0)),-1)
-        x = self.activation(self.linear(x)).squeeze(0)
+        x = self.activation(self.bn(self.linear(x))).squeeze(0)
 
 
         if self.cur_hx is not None:
@@ -134,58 +132,7 @@ class GRU(nn.Module):
         return self.hx
 
 
-class LSTM(nn.Module):
-    def __init__(self, action_size, config):
-        super().__init__()
-        self.bs = config.parameters.dreamer.batch_size
-        self.bl = config.parameters.dreamer.batch_length
-        self.config = config.parameters.dreamer.rssm.recurrent_model
-        self.device = config.operation.device
-        self.stochastic_size = config.parameters.dreamer.stochastic_size
-        self.deterministic_size = config.parameters.dreamer.deterministic_size
-        self.prev_bs = 0
-        self.activation = getattr(nn, self.config.activation)()
-        self.linear = nn.Linear(
-            self.stochastic_size + action_size, self.config.hidden_size
-        )
-        self.cur_cx = None
-        self.cur_hx = None
-        self.recurrent = nn.LSTMCell(self.config.hidden_size, self.deterministic_size)
-        self.hx = nn.Parameter(torch.rand(1, self.deterministic_size).to(self.device))
-        self.cx = nn.Parameter(torch.rand(1, self.deterministic_size).to(self.device))
 
-    def forward(self, embedded_state, action):
-        if action is None or embedded_state is None:
-            return
-        if not isinstance(action, torch.Tensor):
-            action = torch.from_numpy(action).to(self.hx.device)
-        x = torch.cat((embedded_state.squeeze(0), action.squeeze(0)),-1)
-        x = self.activation(self.linear(x)).squeeze(0)
-        if self.cur_hx is not None:
-            self.cur_hx, self.cur_cx = self.recurrent(x, (self.cur_hx.squeeze(0), self.cur_cx.squeeze(0)))
-        else:
-            self.cur_hx, self.cur_cx = self.recurrent(x, (self.hx.squeeze(0), self.cx.squeeze(0)))
-        return self.cur_hx
-
-    def input_init(self, batch_size):
-        self.cur_cx = None
-        self.cur_hx = None
-        if batch_size and self.prev_bs == 0:
-            self.hx = nn.Parameter(self.hx.repeat(batch_size, 1))
-            self.cx = nn.Parameter(self.cx.repeat(batch_size, 1))
-            self.prev_bs = batch_size
-            
-        elif batch_size and self.prev_bs != 0:
-            self.hx = nn.Parameter(self.hx[0].repeat(batch_size, 1))
-            self.cx = nn.Parameter(self.cx[0].repeat(batch_size, 1))
-
-            self.prev_bs = batch_size
-        elif self.prev_bs > 0 and batch_size == 1:
-            self.hx = nn.Parameter(self.hx[0])
-            self.cx = nn.Parameter(self.cx[0])
-
-            self.prev_bs = 0
-        return self.hx
 
 class TransitionModel(nn.Module):
     def __init__(self, config):
@@ -202,6 +149,7 @@ class TransitionModel(nn.Module):
             self.config.activation,
             self.stochastic_size * 2,
         )
+        self.apply(initialize_weights)
 
     def forward(self, x):
         x = self.network(x)
@@ -228,6 +176,7 @@ class RepresentationModel(nn.Module):
             self.config.activation,
             self.stochastic_size * 2,
         )
+        self.apply(initialize_weights)
 
     def forward(self, embedded_observation, deterministic):
         if embedded_observation is None or deterministic is None:
@@ -254,6 +203,7 @@ class RewardModel(nn.Module):
             self.config.activation,
             2,
         )
+        self.apply(initialize_weights)
 
     def forward(self, posterior, deterministic, eval = False):
         x = horizontal_forward(
@@ -261,7 +211,8 @@ class RewardModel(nn.Module):
         )
         if eval:
             x = symexp(x)
-        dist = create_normal_dist(x, init_std = 0.3, event_shape=1)          
+
+        dist = create_normal_dist(x, event_shape=1)          
         return dist
 
 
@@ -279,6 +230,7 @@ class ContinueModel(nn.Module):
             self.config.activation,
             2,
         )
+        self.apply(initialize_weights)
 
     def forward(self, posterior, deterministic):
         x = horizontal_forward(

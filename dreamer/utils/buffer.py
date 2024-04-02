@@ -73,7 +73,7 @@ class ReplayBuffer(object):
                     observation[i, first_done_index + 1:] = observation[i, first_done_index]
                     next_observation[i, first_done_index + 1:] = next_observation[i, first_done_index]
                     action[i, first_done_index + 1:] = action[i, first_done_index]
-                    reward[i, first_done_index + 1:] = reward[i, first_done_index]
+                    reward[i, first_done_index + 1:] = -100
                     done[i, first_done_index + 1:] = 1
 
 

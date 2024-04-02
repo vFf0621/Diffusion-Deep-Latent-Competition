@@ -4,8 +4,6 @@ import numpy as np
 import wandb
 from diffusers import DDIMPipeline
 def simulate(agents, env, num_interaction_episodes, writer, train=True):
-    generator = torch.manual_seed(1)
-
     for epi in range(num_interaction_episodes):
         act = []
         det = []
@@ -23,7 +21,7 @@ def simulate(agents, env, num_interaction_episodes, writer, train=True):
         for i in range(200):
             _, _, _, _, _, = env.step(None)
 
-        for i in range(10):
+        for i in range(4):
             observation, _, _, _, _, = env.step(act)
         emb = []
         for x in range(env.num_agents):
@@ -73,7 +71,7 @@ def simulate(agents, env, num_interaction_episodes, writer, train=True):
             
             observation = next_observation
             if done.all():
-                if train and epi > 5:
+                if train and epi > 5 and epi % 2 == 0:
                     print(
                             "training scores", score, epi
                         )
@@ -83,7 +81,7 @@ def simulate(agents, env, num_interaction_episodes, writer, train=True):
 
                     print(">>>Saving Parameters<<<")
                     for j in range(env.num_agents):
-                        agents[j].train(writer)                    
+                        agents[j].train(writer, pipeline)                    
                         wandb.log(data=writer)
 
                 else:

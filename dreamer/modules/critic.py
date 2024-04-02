@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from dreamer.utils.utils import build_network, create_normal_dist, horizontal_forward, symexp
+from dreamer.utils.utils import build_network, create_normal_dist, horizontal_forward, symexp, initialize_weights
 
 '''
 
@@ -23,6 +23,7 @@ class Critic(nn.Module):
             self.config.activation,
             2,
         )
+        self.apply(initialize_weights)
 
     def forward(self, posterior, deterministic, eval = False):
         x = horizontal_forward(
@@ -30,6 +31,6 @@ class Critic(nn.Module):
         )
         if eval:
             x = symexp(x)
-        dist = create_normal_dist(x, init_std = 1, event_shape=1)
+        dist = create_normal_dist(x, event_shape=1)
 
         return dist
