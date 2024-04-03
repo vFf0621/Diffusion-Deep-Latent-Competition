@@ -69,13 +69,13 @@ parameters :
                 hidden_size : 1000
                 num_layers : 3
                 activation : SiLU
-                min_std : 0.11
+                min_std : 0.1
 
             representation_model:
                 hidden_size : 1000
                 num_layers : 2
                 activation : SiLU
-                min_std : 0.11
+                min_std : 0.1
             
         reward :
             hidden_size : 400
