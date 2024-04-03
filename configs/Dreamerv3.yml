@@ -7,8 +7,8 @@ environment :
     benchmark : car
     task_name : MultiCarRacing-v1
     seed : 0
-    height : 64
-    width : 64
+    height : 96
+    width : 96
     frame_skip : 4
     pixel_norm : True
 parameters :
@@ -69,13 +69,13 @@ parameters :
                 hidden_size : 1000
                 num_layers : 3
                 activation : SiLU
-                min_std : 0.1
+                min_std : 0.11
 
             representation_model:
                 hidden_size : 1000
                 num_layers : 2
                 activation : SiLU
-                min_std : 0.1
+                min_std : 0.11
             
         reward :
             hidden_size : 400
@@ -89,7 +89,7 @@ parameters :
         
         agent :
             actor :
-                hidden_size : 500
+                hidden_size : 400
                 min_std : 0.1
                 activation : SiLU
                 num_layers : 4
