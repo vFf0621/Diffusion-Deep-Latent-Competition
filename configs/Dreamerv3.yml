@@ -33,8 +33,14 @@ parameters :
         actor_learning_rate : 0.0001
         critic_learning_rate : 0.0006
         model_learning_rate : 0.0006
+        encoder_learning_rate : 0.0001
+        discriminator_learning_rate : 0.001
         grad_norm_type : 2
         clip_grad : 100
+
+        model_epsilon :  0.00000001
+        actor_epsilon : 0.00001
+        critic_epsilon : 0.00001
         
         deterministic_size : 200
         stochastic_size : 30

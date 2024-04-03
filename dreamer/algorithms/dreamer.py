@@ -36,7 +36,13 @@ agent_update: Updates the actor and the critic model, we backpropagate using pol
 
 latent_imagination: Takes the current state (both a determinisitc state and a stochastic state)
 then uses it to imagine trajectories of horizon length found in the config file 
-without interaction in the world using the RSSM world model.
+without interaction in the world using the RSSM world model. Uses diffusion generated images, and takes in true images
+to train a discriminator to differentiate between the true and generated images.
+
+latent_imagination: Takes the current state (both a determinisitc state and a stochastic state)
+then uses it to imagine trajectories of horizon length found in the config file 
+without interaction in the world using the RSSM world model. Uses only observations 
+from the true environment (ie no diffusion).
 
 '''
 
@@ -49,10 +55,13 @@ class DreamerV3:
         device,
         config,
         LSTM, 
+        baseline = False
     ):
         self.agent_id = agent_id
         self.device = device
         self.action_size = action_size
+        self.baseline = baseline
+        
         self.encoder = Encoder(observation_shape, config).to(self.device)
         self.target_encoder = Encoder(observation_shape, config).to(self.device)
         self.hard_update(self.target_encoder, self.encoder)
@@ -71,6 +80,7 @@ class DreamerV3:
         self.config = config.parameters.dreamer
         self.disc = Disc(self.config.embedded_state_size).to(self.device)
         self.num_updates = 0
+        
         # optimizer
         self.model_params = (
             list(self.encoder.parameters())
@@ -82,31 +92,36 @@ class DreamerV3:
         if self.config.use_continue_flag:
             self.model_params += list(self.continue_predictor.parameters())
 
+        # epsilon are 1e-8 and 1e-5
         self.model_optimizer = torch.optim.Adam(
-            self.model_params, lr=self.config.model_learning_rate, eps=1e-08,
+            self.model_params, lr=self.config.model_learning_rate, eps=self.config.model_epsilon,
         )
         self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=self.config.actor_learning_rate,eps=1e-5
+            self.actor.parameters(), lr=self.config.actor_learning_rate,eps=self.config.actor_epsilon
         )
         self.critic_optimizer = torch.optim.Adam(
-            self.critic.parameters(), lr=self.config.critic_learning_rate, eps=1e-5 
+            self.critic.parameters(), lr=self.config.critic_learning_rate, eps=self.config.critic_epsilon
         )
-        self.imag_encoder_optim = torch.optim.Adam(self.imag_encoder_params, lr=0.0001)
+        self.imag_encoder_optim = torch.optim.Adam(self.imag_encoder_params, lr=self.config.encoder_learning_rate)
 
         self.dynamic_learning_infos = DynamicInfos(self.device)
         self.behavior_learning_infos = DynamicInfos(self.device)
         self.writer = writer
         self.num_total_episode = 0
         self.gf = GaussianFilterLayer().to(self.device)
-        self.disc_optim = torch.optim.Adam(self.disc.parameters(), lr=0.001)
+        self.disc_optim = torch.optim.Adam(self.disc.parameters(), lr=self.config.discriminator_learning_rate)
 
         print("Agent " + str(self.agent_id)+ " Initiated!")
+        
+        
     def hard_update(self, target, original):
         target.load_state_dict(original.state_dict())
+
 
     def soft_update(self, target, source, tau=0.02):
         for target_param, param in zip(target.parameters(), source.parameters()):
             target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
+
 
     def train(self, metrics, pipeline):
 
@@ -117,11 +132,15 @@ class DreamerV3:
             _, deterministic = self.dynamic_learning(data, metrics)
             deterministic = self.rssm.recurrent_model.input_init(50)
             #deterministic = self.rssm.recurrent_model.input_init(100)
-            if i % 4 == 0:
-                x = pipeline(batch_size = 50, num_inference_steps=30, output_type="np", return_dict = False)[0]
-                x = torch.from_numpy(x).to(self.device).float().squeeze(0).permute((0, 3,1,2))
+            if self.baseline:
+                self.latent_imagination_baseline(data.observation[:, 0, :], deterministic, metrics)
+            else:
+                if i % 4 == 0:
+                    x = pipeline(batch_size = 50, num_inference_steps=30, output_type="np", return_dict = False)[0]
+                    x = torch.from_numpy(x).to(self.device).float().squeeze(0).permute((0, 3,1,2))
 
-            self.latent_imagination(data.observation[:, 0, :], x, deterministic, metrics)
+                self.latent_imagination(data.observation[:, 0, :], x, deterministic, metrics)
+
 
     def dynamic_learning(self, data, metrics):
         prior, deterministic = self.rssm.recurrent_model_input_init(len(data.action))
@@ -163,6 +182,7 @@ class DreamerV3:
         infos = self.dynamic_learning_infos.get_stacked()
         self._model_update(data, infos, metrics)
         return infos.posteriors.detach(), infos.deterministics.detach()
+
 
     def _model_update(self, data, posterior_info, metrics):
         reconstructed_observation = self.decoder(
@@ -233,6 +253,31 @@ class DreamerV3:
         self.soft_update(self.rssm.transition_model_target, self.rssm.transition_model)
         self.soft_update(self.target_encoder, self.encoder)
 
+
+    def latent_imagination_baseline(self, true_obs, det, metrics):
+        z = self.encoder(true_obs).detach()
+        deterministic = det.reshape(-1, self.config.deterministic_size)
+
+        _, state = self.rssm.representation_model(z.clone(), deterministic.clone().detach())
+        gt = torch.zeros((z.shape[0])).to(self.device)
+
+        state = state.reshape(-1, self.config.stochastic_size)
+
+        # continue_predictor reinit
+        for t in range(self.config.horizon_length):
+            action, log_prob = self.actor(state, deterministic)
+            deterministic = self.rssm.recurrent_model(state, action)
+            _, state = self.rssm.transition_model(deterministic)
+
+            self.behavior_learning_infos.append(
+                priors=state, deterministics=deterministic,
+                actions=action, 
+                log_probs = log_prob
+            )
+
+        self._agent_update(self.behavior_learning_infos.get_stacked(), metrics)
+
+
     def latent_imagination(self, true_obs, gen_obs, det, metrics):
         z = self.encoder(true_obs).detach()
         z_ = self.imag_encoder(self.encoder(gen_obs).detach())
@@ -297,6 +342,8 @@ class DreamerV3:
             )
 
         self._agent_update(self.behavior_learning_infos.get_stacked(), metrics)
+        
+        
     def save_state_dict(self):
         self.rssm.recurrent_model.input_init(1)
         id = self.agent_id + 1
@@ -307,6 +354,7 @@ class DreamerV3:
         torch.save(self.reward_predictor.state_dict(), os.path.join(find_dir('pretrained_parameters'),'REWARD'+str(id)))        
         torch.save(self.continue_predictor.state_dict(), os.path.join(find_dir('pretrained_parameters'),'CONTINUE'+str(id)))   
 
+
     def load_state_dict(self):
         id = self.agent_id + 1
         self.rssm.load_state_dict(torch.load('pretrained_parameters/RSSM'+ str(id)) )
@@ -315,6 +363,8 @@ class DreamerV3:
         self.critic.load_state_dict(torch.load('pretrained_parameters/CRITIC'+ str(id)))
         self.reward_predictor.load_state_dict(torch.load('pretrained_parameters/REWARD'+ str(id)))
         self.continue_predictor.load_state_dict(torch.load('pretrained_parameters/CONTINUE'+ str(id)))
+        
+        
     def _agent_update(self, behavior_learning_infos, metrics):
         predicted_rewards = self.reward_predictor(
             behavior_learning_infos.priors, behavior_learning_infos.deterministics, eval = True
@@ -341,7 +391,7 @@ class DreamerV3:
         )
         id = self.agent_id + 1
         if self.num_updates % 2 == 0:
-            actor_loss = -torch.mean(lambda_values)#-torch.log(1-actions**2+0.001).view(-1).mean()
+            actor_loss = -torch.mean(lambda_values) #-torch.log(1-actions**2+0.001).view(-1).mean()
             metrics["actor_loss_" + str(id)] = actor_loss.mean().item()
 
             self.actor_optimizer.zero_grad()
